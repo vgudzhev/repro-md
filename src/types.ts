@@ -97,6 +97,14 @@ export interface AssertionDef {
   args: Record<string, unknown>;
 }
 
+export interface DaemonConfig {
+  idle_split_seconds: number;
+  retention_days: number;
+  max_traces: number;
+  max_disk_mb: number;
+  port: number;
+}
+
 export interface AssertionResult {
   assertion: AssertionDef;
   passed: boolean;

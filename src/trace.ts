@@ -16,6 +16,7 @@ export class TraceWriter {
   private readonly tracePath: string;
   private readonly blobThreshold: number;
   private initialized = false;
+  private finalized = false;
 
   constructor(traceDir: string, blobThreshold = 10 * 1024) {
     this.traceDir = traceDir;
@@ -51,7 +52,8 @@ export class TraceWriter {
   }
 
   finalize(): void {
-    if (!this.initialized) return;
+    if (!this.initialized || this.finalized) return;
+    this.finalized = true;
     appendFileSync(this.tracePath, "\n]\n", "utf-8");
   }
 

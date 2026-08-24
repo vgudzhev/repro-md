@@ -21,3 +21,22 @@ export { alignTraces, explainDivergence } from "./diff.js";
 export { ddmin, minimize, StochasticOracle, BudgetExhaustedError } from "./minimize.js";
 export type { Oracle, OracleOptions, MinimizeResult } from "./minimize.js";
 export { StubUpstream } from "./test-fixtures/stub-upstream.js";
+export { SessionSplitter } from "./session-splitter.js";
+export type { CompletedSession, SessionSplitterOptions } from "./session-splitter.js";
+export {
+  loadDaemonConfig,
+  listDaemonTraces,
+  pruneTraces,
+  getDaemonDiskUsage,
+  DEFAULT_DAEMON_CONFIG,
+} from "./retention.js";
+export type { TraceInfo } from "./retention.js";
+export {
+  startDaemon,
+  stopDaemon,
+  daemonStatus,
+  daemonRun,
+  getReproHome,
+  getTracesDir,
+} from "./daemon.js";
+export type { DaemonConfig } from "./types.js";

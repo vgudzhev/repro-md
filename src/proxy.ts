@@ -29,6 +29,7 @@ export interface RecordingProxyOptions {
   redactionConfig?: RedactionConfig;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  onExchangeComplete?: () => void;
 }
 
 export interface ReplayProxyOptions {
@@ -41,25 +42,29 @@ export interface ReplayProxyOptions {
 export class RecordingProxy {
   private server: Server | null = null;
   private readonly upstream: URL;
-  private readonly traceWriter: TraceWriter;
+  private traceWriter: TraceWriter;
   private readonly envRedactions: Array<{ value: string; marker: string }>;
   private readonly redactionConfig: RedactionConfig;
   private readonly cwd: string | undefined;
+  private readonly blobThreshold: number;
+  private readonly onExchangeComplete?: () => void;
   private seq = 0;
   private port = 0;
 
   constructor(options: RecordingProxyOptions) {
     this.upstream = new URL(options.upstream);
     this.cwd = options.cwd;
+    this.blobThreshold = options.blobThreshold ?? 10 * 1024;
     this.traceWriter = new TraceWriter(
       options.traceDir,
-      options.blobThreshold,
+      this.blobThreshold,
     );
     this.envRedactions = buildEnvRedactions(
       (options.env ?? process.env) as Record<string, string | undefined>,
       options.redactionConfig?.allowedEnvVars,
     );
     this.redactionConfig = options.redactionConfig ?? {};
+    this.onExchangeComplete = options.onExchangeComplete;
   }
 
   async start(port?: number): Promise<number> {
@@ -94,6 +99,12 @@ export class RecordingProxy {
 
   getPort(): number {
     return this.port;
+  }
+
+  resetTrace(newTraceDir: string): void {
+    this.traceWriter = new TraceWriter(newTraceDir, this.blobThreshold);
+    this.traceWriter.init();
+    this.seq = 0;
   }
 
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
@@ -220,6 +231,7 @@ export class RecordingProxy {
         body: redacted,
         streaming: false,
       });
+      this.onExchangeComplete?.();
 
       clientRes.writeHead(upstreamRes.statusCode ?? 200, {
         "Content-Type": "application/json",
@@ -259,6 +271,7 @@ export class RecordingProxy {
         body: redacted,
         streaming: true,
       });
+      this.onExchangeComplete?.();
 
       clientRes.end();
     });

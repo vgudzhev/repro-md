@@ -7,6 +7,10 @@ import {
   readFileSync,
   readdirSync,
   writeFileSync,
+  cpSync,
+  rmSync,
+  mkdirSync,
+  renameSync,
 } from "node:fs";
 import { RecordingProxy, ReplayProxy } from "./proxy.js";
 import { generateTraceId } from "./id.js";
@@ -22,6 +26,26 @@ import { alignTraces, explainDivergence } from "./diff.js";
 import { minimize } from "./minimize.js";
 import type { AssertionDef, AnthropicRequest, TraceMeta } from "./types.js";
 import { createLiveOracle, estimateCostPerCall } from "./oracle.js";
+import {
+  startDaemon,
+  stopDaemon,
+  daemonStatus,
+  daemonRun,
+  getTracesDir,
+} from "./daemon.js";
+import { listDaemonTraces } from "./retention.js";
+
+function findTraceDir(
+  id: string,
+): { dir: string; source: "repo" | "daemon" } | null {
+  const repoDir = join(process.cwd(), ".repro", id);
+  if (existsSync(repoDir)) return { dir: repoDir, source: "repo" };
+
+  const daemonDir = join(getTracesDir(), id);
+  if (existsSync(daemonDir)) return { dir: daemonDir, source: "daemon" };
+
+  return null;
+}
 
 export interface RecordFlags {
   model?: string;
@@ -328,10 +352,25 @@ function saveCommand(args: string[]): void {
     process.exit(1);
   }
 
-  const traceDir = join(process.cwd(), ".repro", id);
-  if (!existsSync(traceDir)) {
+  const found = findTraceDir(id);
+  if (!found) {
     console.error(`repro: trace ${id} not found`);
     process.exit(1);
+  }
+
+  let traceDir = found.dir;
+
+  if (found.source === "daemon") {
+    const repoTraceDir = join(process.cwd(), ".repro", id);
+    mkdirSync(join(process.cwd(), ".repro"), { recursive: true });
+    try {
+      renameSync(found.dir, repoTraceDir);
+    } catch {
+      cpSync(found.dir, repoTraceDir, { recursive: true });
+      rmSync(found.dir, { recursive: true, force: true });
+    }
+    traceDir = repoTraceDir;
+    console.error(`repro: moved daemon trace to .repro/${id}`);
   }
 
   const titleIdx = args.indexOf("--title");
@@ -496,34 +535,60 @@ async function testCommand(): Promise<void> {
   process.exit(failed > 0 || diverged > 0 ? 1 : 0);
 }
 
-function listCommand(): void {
-  const reproPath = join(process.cwd(), ".repro");
-  if (!existsSync(reproPath)) {
-    console.error("repro: no .repro/ directory found");
-    process.exit(1);
+function listCommand(_args: string[] = []): void {
+  interface ListEntry {
+    id: string;
+    date: string;
+    events: number;
+    command: string;
+    model?: string;
+    auth?: string;
+    source: "repo" | "daemon";
   }
 
-  const entries = readdirSync(reproPath, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && d.name.startsWith("r-"))
-    .map((d) => {
+  const entries: ListEntry[] = [];
+
+  const reproPath = join(process.cwd(), ".repro");
+  if (existsSync(reproPath)) {
+    for (const d of readdirSync(reproPath, { withFileTypes: true })) {
+      if (!d.isDirectory() || !d.name.startsWith("r-")) continue;
       const dir = join(reproPath, d.name);
       const metaPath = join(dir, "meta.json");
-      if (!existsSync(metaPath)) return null;
-      const meta = JSON.parse(readFileSync(metaPath, "utf-8"));
-      return {
-        id: d.name,
-        date: meta.startTime,
-        events: meta.eventCount,
-        command: meta.command?.join(" ") ?? "unknown",
-        model: meta.model,
-        auth: meta.auth,
-      };
-    })
-    .filter(Boolean)
-    .sort(
-      (a, b) =>
-        new Date(b!.date).getTime() - new Date(a!.date).getTime(),
-    );
+      if (!existsSync(metaPath)) continue;
+      try {
+        const meta = JSON.parse(readFileSync(metaPath, "utf-8"));
+        entries.push({
+          id: d.name,
+          date: meta.startTime,
+          events: meta.eventCount,
+          command: meta.command?.join(" ") ?? "unknown",
+          model: meta.model,
+          auth: meta.auth,
+          source: "repo",
+        });
+      } catch {
+        // skip malformed meta
+      }
+    }
+  }
+
+  const tracesDir = getTracesDir();
+  const daemonTraces = listDaemonTraces(tracesDir);
+  for (const dt of daemonTraces) {
+    if (entries.some((e) => e.id === dt.id)) continue;
+    entries.push({
+      id: dt.id,
+      date: dt.meta.startTime,
+      events: dt.meta.eventCount,
+      command: dt.meta.command?.join(" ") ?? "daemon",
+      model: dt.meta.model,
+      source: "daemon",
+    });
+  }
+
+  entries.sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+  );
 
   const manifest = readManifest(process.cwd());
   const manifestMap = new Map(manifest.map((e) => [e.id, e]));
@@ -533,17 +598,15 @@ function listCommand(): void {
     return;
   }
 
-  console.log("ID         Date                 Events  Status    Model            Command");
+  console.log("ID         Date                 Events  Status    Source   Command");
   console.log("─".repeat(90));
 
   for (const entry of entries) {
-    if (!entry) continue;
     const m = manifestMap.get(entry.id);
     const status = m ? m.status : "unsaved";
     const date = entry.date.slice(0, 19).replace("T", " ");
-    const model = entry.model ?? "";
     console.log(
-      `${entry.id.padEnd(10)} ${date.padEnd(20)} ${String(entry.events).padEnd(7)} ${status.padEnd(9)} ${model.padEnd(16)} ${entry.command.slice(0, 30)}`,
+      `${entry.id.padEnd(10)} ${date.padEnd(20)} ${String(entry.events).padEnd(7)} ${status.padEnd(9)} ${entry.source.padEnd(8)} ${entry.command.slice(0, 30)}`,
     );
   }
 }
@@ -557,11 +620,12 @@ function inspectCommand(args: string[]): void {
     process.exit(1);
   }
 
-  const traceDir = join(process.cwd(), ".repro", id);
-  if (!existsSync(traceDir)) {
+  const found = findTraceDir(id);
+  if (!found) {
     console.error(`repro: trace ${id} not found`);
     process.exit(1);
   }
+  const traceDir = found.dir;
 
   const reader = new TraceReader(traceDir);
   const meta = reader.readMeta();
@@ -863,6 +927,25 @@ async function minimizeCommand(args: string[]): Promise<void> {
   }
 }
 
+async function daemonCommand(args: string[]): Promise<void> {
+  const subcommand = args[0];
+
+  switch (subcommand) {
+    case "start":
+      await startDaemon();
+      break;
+    case "stop":
+      await stopDaemon();
+      break;
+    case "status":
+      daemonStatus();
+      break;
+    default:
+      console.error("Usage: repro daemon <start|stop|status>");
+      process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args[0];
@@ -884,7 +967,7 @@ async function main(): Promise<void> {
       await testCommand();
       break;
     case "list":
-      listCommand();
+      listCommand(args.slice(1));
       break;
     case "inspect":
       inspectCommand(args.slice(1));
@@ -897,6 +980,12 @@ async function main(): Promise<void> {
       break;
     case "minimize":
       await minimizeCommand(args.slice(1));
+      break;
+    case "daemon":
+      await daemonCommand(args.slice(1));
+      break;
+    case "_daemon-run":
+      await daemonRun(args.slice(1));
       break;
     default:
       console.error("Usage: repro <command>");
@@ -911,6 +1000,9 @@ async function main(): Promise<void> {
       console.error("  diff <a> <b>       Compare two traces");
       console.error("  explain <a> <b>    Explain first divergence");
       console.error("  minimize <id>      Minimize reproducing inputs");
+      console.error("  daemon start       Start background recording daemon");
+      console.error("  daemon stop        Stop the daemon");
+      console.error("  daemon status      Show daemon status");
       process.exit(1);
   }
 }
