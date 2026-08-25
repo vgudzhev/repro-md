@@ -1,6 +1,6 @@
 {
   "name": "repro-md",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Minimal reproducible test cases for AI coding agents you didn't write",
   "type": "module",
   "bin": {
