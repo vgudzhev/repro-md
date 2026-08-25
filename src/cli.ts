@@ -34,6 +34,8 @@ import {
   getTracesDir,
 } from "./daemon.js";
 import { listDaemonTraces } from "./retention.js";
+import { planFork, executeFork } from "./fork.js";
+import { bisect, validateBisectInputs } from "./bisect.js";
 
 function findTraceDir(
   id: string,
@@ -927,6 +929,155 @@ async function minimizeCommand(args: string[]): Promise<void> {
   }
 }
 
+async function forkCommand(args: string[]): Promise<void> {
+  const id = args.find((a) => !a.startsWith("--"));
+  if (!id) {
+    console.error("Usage: repro fork <id> --at <step>");
+    process.exit(1);
+  }
+
+  const atIdx = args.indexOf("--at");
+  if (atIdx === -1 || !args[atIdx + 1]) {
+    console.error("repro: --at <step> is required");
+    console.error("Usage: repro fork <id> --at <step>");
+    process.exit(1);
+  }
+  const forkAt = parseInt(args[atIdx + 1]);
+  if (isNaN(forkAt) || forkAt < 1) {
+    console.error("repro: --at must be a positive integer");
+    process.exit(1);
+  }
+
+  const found = findTraceDir(id);
+  if (!found) {
+    console.error(`repro: trace ${id} not found`);
+    process.exit(1);
+  }
+
+  const repoDir = process.cwd();
+
+  try {
+    planFork(found.dir, forkAt);
+
+    console.error(`\nForking ${id} at step ${forkAt}\n`);
+
+    const result = await executeFork({
+      traceDir: found.dir,
+      forkAt,
+      repoDir,
+    });
+
+    console.error(`\n✓ ${result.replayedSteps} model/tool events replayed`);
+    console.error(`✓ filesystem reconstructed`);
+    console.error(`✓ worktree created at ${result.worktreePath}`);
+
+    for (const w of result.warnings) {
+      console.error(`⚠ ${w}`);
+    }
+
+    console.error(`\nLive execution begins at step ${forkAt}.`);
+    console.error(`Agent exited with code ${result.exitCode}.`);
+
+    const { removeWorktree: rmWt } = await import("./worktree.js");
+    rmWt(repoDir, result.worktreePath);
+    console.error("✓ worktree cleaned up");
+
+    process.exit(result.exitCode);
+  } catch (err) {
+    console.error(`repro: error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
+async function bisectCommand(args: string[]): Promise<void> {
+  const subcommand = args[0];
+
+  if (subcommand !== "run") {
+    console.error("Usage: repro bisect run <id> --good <commit> --bad <commit>");
+    process.exit(1);
+  }
+
+  const restArgs = args.slice(1);
+  const id = restArgs.find((a) => !a.startsWith("--"));
+  if (!id) {
+    console.error("Usage: repro bisect run <id> --good <commit> --bad <commit>");
+    process.exit(1);
+  }
+
+  const goodIdx = restArgs.indexOf("--good");
+  const badIdx = restArgs.indexOf("--bad");
+  if (goodIdx === -1 || !restArgs[goodIdx + 1]) {
+    console.error("repro: --good <commit> is required");
+    process.exit(1);
+  }
+  if (badIdx === -1 || !restArgs[badIdx + 1]) {
+    console.error("repro: --bad <commit> is required");
+    process.exit(1);
+  }
+
+  const goodCommit = restArgs[goodIdx + 1];
+  const badCommit = restArgs[badIdx + 1];
+
+  const found = findTraceDir(id);
+  if (!found) {
+    console.error(`repro: trace ${id} not found`);
+    process.exit(1);
+  }
+
+  const repoDir = process.cwd();
+
+  try {
+    const { good, bad, commits } = validateBisectInputs(repoDir, goodCommit, badCommit);
+
+    console.error(`\nrepro: bisecting ${id}`);
+    console.error(`repro: good=${good.slice(0, 7)}, bad=${bad.slice(0, 7)}`);
+    console.error(`repro: ${commits.length} commit(s) to evaluate\n`);
+
+    const result = await bisect({
+      traceDir: found.dir,
+      repoDir,
+      goodCommit,
+      badCommit,
+    });
+
+    console.error("");
+    for (const c of result.candidates) {
+      const marker = c.verdict === "GOOD" ? "✓" : c.verdict === "BAD" ? "✗" : "?";
+      console.error(`  ${marker} ${c.commit.slice(0, 7)} ${c.verdict}: ${c.message}`);
+
+      if (c.firstDivergence) {
+        console.error(`    First divergence: step ${c.firstDivergence.step}`);
+        console.error(`      Expected: ${c.firstDivergence.expected}`);
+        console.error(`      Observed: ${c.firstDivergence.observed}`);
+      }
+    }
+
+    console.error("");
+    if (result.firstBad) {
+      try {
+        const summary = execSync(
+          `git log -1 --format="%h %s" ${result.firstBad}`,
+          { cwd: repoDir, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
+        ).trim();
+        console.error(`repro: first bad commit: ${summary}`);
+      } catch {
+        console.error(`repro: first bad commit: ${result.firstBad.slice(0, 7)}`);
+      }
+    } else {
+      console.error("repro: could not identify first bad commit");
+    }
+
+    console.error(
+      `repro: ${result.stepsEvaluated} of ${result.totalCommits} commits evaluated`,
+    );
+
+    process.exit(result.firstBad ? 1 : 0);
+  } catch (err) {
+    console.error(`repro: error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
 async function daemonCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
 
@@ -981,6 +1132,12 @@ async function main(): Promise<void> {
     case "minimize":
       await minimizeCommand(args.slice(1));
       break;
+    case "fork":
+      await forkCommand(args.slice(1));
+      break;
+    case "bisect":
+      await bisectCommand(args.slice(1));
+      break;
     case "daemon":
       await daemonCommand(args.slice(1));
       break;
@@ -1000,6 +1157,8 @@ async function main(): Promise<void> {
       console.error("  diff <a> <b>       Compare two traces");
       console.error("  explain <a> <b>    Explain first divergence");
       console.error("  minimize <id>      Minimize reproducing inputs");
+      console.error("  fork <id> --at <n> Fork a recording at step N");
+      console.error("  bisect run <id>    Binary-search for regression commit");
       console.error("  daemon start       Start background recording daemon");
       console.error("  daemon stop        Stop the daemon");
       console.error("  daemon status      Show daemon status");
