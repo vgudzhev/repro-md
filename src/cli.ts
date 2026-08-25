@@ -34,6 +34,11 @@ import {
   getTracesDir,
 } from "./daemon.js";
 import { listDaemonTraces } from "./retention.js";
+import {
+  captureSnapshot,
+  formatSnapshot,
+  writeSnapshot,
+} from "./snapshot.js";
 
 function findTraceDir(
   id: string,
@@ -186,6 +191,12 @@ async function recordCommand(args: string[]): Promise<void> {
       ...(recordAuth ? { auth: recordAuth } : {}),
     };
     traceWriter.writeMeta(meta);
+
+    const snapshot = captureSnapshot({
+      cwd: process.cwd(),
+      model: recordModel,
+    });
+    writeSnapshot(reproDir, snapshot);
 
     console.error(
       `repro: ${code === 0 ? "completed" : "agent failed"} after ${meta.eventCount} events`,
@@ -927,6 +938,25 @@ async function minimizeCommand(args: string[]): Promise<void> {
   }
 }
 
+function snapshotCommand(args: string[]): void {
+  const jsonOutput = args.includes("--json");
+  const outputIdx = args.indexOf("--output");
+  const outputDir = outputIdx >= 0 && args[outputIdx + 1] ? args[outputIdx + 1] : null;
+
+  const snapshot = captureSnapshot({ cwd: process.cwd() });
+
+  if (outputDir) {
+    writeSnapshot(outputDir, snapshot);
+    console.error(`repro: snapshot written to ${join(outputDir, "snapshot.json")}`);
+  }
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(snapshot, null, 2));
+  } else {
+    console.log(formatSnapshot(snapshot));
+  }
+}
+
 async function daemonCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
 
@@ -981,6 +1011,9 @@ async function main(): Promise<void> {
     case "minimize":
       await minimizeCommand(args.slice(1));
       break;
+    case "snapshot":
+      snapshotCommand(args.slice(1));
+      break;
     case "daemon":
       await daemonCommand(args.slice(1));
       break;
@@ -997,6 +1030,7 @@ async function main(): Promise<void> {
       console.error("  test               Replay all open failures");
       console.error("  list               List all recordings");
       console.error("  inspect <id>       Show trace details");
+      console.error("  snapshot           Capture environment snapshot");
       console.error("  diff <a> <b>       Compare two traces");
       console.error("  explain <a> <b>    Explain first divergence");
       console.error("  minimize <id>      Minimize reproducing inputs");

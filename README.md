@@ -14,6 +14,7 @@ Record a real agent session, replay it offline, assert on what the agent did, an
 - [Use Case: Catching an Agent That Edits Generated Files](#use-case-catching-an-agent-that-edits-generated-files)
 - [How It Works](#how-it-works)
 - [Commands Reference](#commands-reference)
+- [Environment Snapshots](#environment-snapshots)
 - [Assertions](#assertions)
 - [Replay Modes](#replay-modes)
 - [Recording Options](#recording-options)
@@ -251,6 +252,62 @@ Oracle-free assertions check what the agent did without needing a model to judge
 | `repro diff <a> <b> [--json]` | Align and compare two traces side by side |
 | `repro explain <a> <b>` | Report the first divergence and downstream effects |
 | `repro minimize <id> --budget <n>` | Delta-debug inputs to find a minimal reproducing set |
+| `repro snapshot [--json]` | Capture and display an environment snapshot |
+
+---
+
+## Environment Snapshots
+
+Every `repro record` automatically captures an environment snapshot alongside the trace. The snapshot records the repository state, platform, runtimes, lockfile hashes, and agent information — everything needed to answer "what environment did this failure happen in?" without exposing secrets.
+
+You can also capture a snapshot independently:
+
+```bash
+repro snapshot
+```
+
+Output:
+
+```
+Repository
+  commit:   8f21c9d
+  branch:   main
+  dirty:    yes
+  changed:  3 file(s)
+
+Environment
+  platform: linux-x64
+  node: 22.4.0
+  npm: 10.8.0
+  pkg-mgr:  npm 10.8.0
+  package-lock.json: sha256:a1b2c3d...
+
+Agent
+  claude-code: 2.4.1
+  model:    claude-sonnet-4-20250514
+
+Workdir
+  relative: .
+```
+
+Use `--json` for machine-readable output. Use `--output <dir>` to write `snapshot.json` to a directory.
+
+The snapshot is stored as `.repro/<id>/snapshot.json` alongside `meta.json` and `trace.json`. It is backward compatible — existing traces without a snapshot continue to work. The snapshot format is versioned (`formatVersion`) for future evolution.
+
+**What is captured:**
+- Git: repository root, commit SHA, branch, dirty status, dirty diff (stat), safe untracked files
+- Platform: OS, architecture, kernel release
+- Runtimes: Node.js, npm, Python, Go, Rust (where available)
+- Package manager and version
+- Lockfile content hashes (SHA-256)
+- Agent name, version, and model (where available)
+- Working directory relative to repository root
+- Non-secret environment variable names (never values)
+
+**What is NOT captured:**
+- Environment variable values (only names, filtered for safety)
+- Files matching secret patterns (`.env`, `*.pem`, `*.key`, etc.)
+- Untracked files with sensitive-looking names
 
 ---
 
@@ -403,6 +460,7 @@ Design decisions are recorded in `docs/decisions/`. Key ones:
 | D-011 | Oracle-free assertions only in v0.1 |
 | D-020 | Hash raw request body before redaction |
 | D-021 | Strip system prompt and `<system-reminder>` noise from hash |
+| D-027 | Environment snapshots as separate artifact |
 
 ---
 

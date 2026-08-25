@@ -276,3 +276,59 @@ Source of truth for progress. Updated as work completes.
 - [x] P5-T3: **Low reproduction rate rejection.** Set reproduction rate to 0.1. Assert `minimize` refuses to run with an explanatory message.
 
 **Phase 5 gate:** all tests pass. Manual validation passed 2026-08-15: live minimize ran against real Anthropic API with `max_calls` and `forbidden_path` assertions, ddmin correctly reduced input sets, total spend $0.03.
+
+---
+
+## Phase 6 — Environment Snapshots (Phase 1)
+
+- [x] P6-1: **EnvironmentSnapshot type and capture.** First-class snapshot concept in `src/snapshot.ts`:
+  - Git: repository root, commit SHA, branch, dirty status, dirty file count, dirty diff (stat), safe untracked files
+  - Platform: OS, architecture, kernel release
+  - Runtimes: Node.js, npm, Python, Go, Rust (detected via `--version`)
+  - Package manager detection from lockfile presence
+  - Lockfile SHA-256 hashes (deterministic, content-addressed)
+  - Agent name, version, model (from options or auto-detection)
+  - Working directory (absolute and relative to repo root)
+  - Non-secret environment variable names (values never captured)
+  - Format version for backward-compatible evolution
+  - Timestamp
+
+- [x] P6-2: **`repro snapshot` CLI command.** Standalone environment inspection:
+  - Human-readable summary output (repository, environment, agent, workdir sections)
+  - `--json` flag for machine-readable output
+  - `--output <dir>` to write `snapshot.json` to a directory
+
+- [x] P6-3: **Integration with `repro record`.** Snapshot captured automatically after recording completes, stored as `.repro/<id>/snapshot.json`.
+
+- [x] P6-4: **Security model.** Follows existing redaction principles (D-007):
+  - No environment variable values captured
+  - Untracked files filtered against sensitive patterns (.env, *.pem, *.key, *secret*, etc.)
+  - Environment variable names filtered against secret-related prefixes
+
+- [x] P6-5: **ADR-027.** Decision record for environment snapshots as separate artifact.
+
+### Phase 6 tests
+
+- [x] P6-T1: **Clean repository snapshot.** Capture snapshot from clean git repo, verify commit SHA format, dirty=false, all required fields present.
+
+- [x] P6-T2: **Dirty repository snapshot.** Capture from dirty repo, verify dirty=true, dirtyFileCount > 0, dirtyDiff contains changed filenames.
+
+- [x] P6-T3: **Lockfile hashing.** Verify SHA-256 hashes are deterministic for same content, different for different content, absent when no lockfiles exist.
+
+- [x] P6-T4: **Missing runtimes.** Capture snapshot in environment without Go/Rust/Python — no errors thrown, missing runtimes simply omitted.
+
+- [x] P6-T5: **Environment variable redaction.** Verify only names captured (never values), secret-named vars excluded, PATH included.
+
+- [x] P6-T6: **Deterministic serialization.** Same repo produces structurally identical snapshots across calls (excluding timestamp). Valid JSON.
+
+- [x] P6-T7: **Backward compatibility.** Existing traces without snapshot.json continue to work. readSnapshot() returns null. meta.json untouched.
+
+- [x] P6-T8: **Non-git directory.** Capture snapshot outside any git repo — commit=null, branch=null, no errors.
+
+- [x] P6-T9: **Write/read round-trip.** writeSnapshot → readSnapshot produces identical object. Creates directories as needed. Returns null for missing/malformed files.
+
+- [x] P6-T10: **Snapshot size.** Serialized snapshot is under 50KB.
+
+- [x] P6-T11: **Unsafe untracked files excluded.** .env, *.pem, *secret* files not listed in untrackedFiles.
+
+**Phase 6 gate:** all 171 tests pass (132 existing + 39 new), lint clean, build clean.

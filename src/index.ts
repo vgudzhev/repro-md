@@ -40,3 +40,11 @@ export {
   getTracesDir,
 } from "./daemon.js";
 export type { DaemonConfig } from "./types.js";
+export {
+  captureSnapshot,
+  formatSnapshot,
+  writeSnapshot,
+  readSnapshot,
+  SNAPSHOT_FORMAT_VERSION,
+} from "./snapshot.js";
+export type { EnvironmentSnapshot, SnapshotOptions } from "./snapshot.js";
