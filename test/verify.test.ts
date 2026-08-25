@@ -4,9 +4,7 @@ import {
   mkdirSync,
   rmSync,
   writeFileSync,
-  existsSync,
   readFileSync,
-  unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
 import {

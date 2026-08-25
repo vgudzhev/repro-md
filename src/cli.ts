@@ -48,6 +48,11 @@ import {
   formatSnapshot,
   writeSnapshot,
 } from "./snapshot.js";
+import {
+  runFix,
+  ClaudeCodeRunner,
+  FixError,
+} from "./fix.js";
 
 function findTraceDir(
   id: string,
@@ -1250,6 +1255,97 @@ function importCommand(args: string[]): void {
   }
 }
 
+async function fixCommand(args: string[]): Promise<void> {
+  const id = args.find((a) => !a.startsWith("--"));
+  if (!id) {
+    console.error("Usage: repro fix <id> [--max-attempts N] [--agent <name>]");
+    process.exit(1);
+  }
+
+  const maxAttemptsIdx = args.indexOf("--max-attempts");
+  const maxAttempts =
+    maxAttemptsIdx >= 0 && args[maxAttemptsIdx + 1]
+      ? parseInt(args[maxAttemptsIdx + 1], 10)
+      : 3;
+  if (isNaN(maxAttempts) || maxAttempts < 1) {
+    console.error("repro: --max-attempts must be a positive integer");
+    process.exit(1);
+  }
+
+  const agentIdx = args.indexOf("--agent");
+  const agentName =
+    agentIdx >= 0 && args[agentIdx + 1] ? args[agentIdx + 1] : "claude-code";
+  if (agentName !== "claude-code") {
+    console.error(
+      `repro: unsupported agent '${agentName}' — only 'claude-code' is currently supported`,
+    );
+    process.exit(1);
+  }
+
+  const found = findTraceDir(id);
+  if (!found) {
+    console.error(`repro: trace ${id} not found`);
+    process.exit(1);
+  }
+
+  const manifest = readManifest(process.cwd());
+  const entry = manifest.find((e) => e.id === id);
+  const title = entry?.title ?? "Untitled failure";
+
+  console.error(`repro: fix ${id}`);
+  console.error("repro: verifying reproduction and confirming baseline failure...");
+
+  try {
+    const { session, attempts } = await runFix({
+      id,
+      traceDir: found.dir,
+      repoDir: process.cwd(),
+      maxAttempts,
+      title,
+      agentRunner: new ClaudeCodeRunner(),
+    });
+
+    console.error("repro: ✓ baseline confirmed failing");
+    for (const a of attempts) {
+      console.error(
+        `repro: attempt ${a.attemptNumber}/${maxAttempts} — ${a.passed ? "✓ assertion passed" : "✗ assertion still failing"} (agent exit ${a.agentExitCode}, ${a.changedFiles.length} file(s) changed)`,
+      );
+    }
+
+    if (session.status === "verified") {
+      console.log("");
+      console.log("Fix verified.");
+      console.log("");
+      console.log(`Reproduction: ${id}`);
+      console.log(`Attempts: ${session.attemptCount}`);
+      console.log(`Changed files: ${session.changedFiles.length}`);
+      console.log(
+        `Diff: +${session.diffStat.insertions} / -${session.diffStat.deletions}`,
+      );
+      for (const r of session.finalResult?.assertionResults ?? []) {
+        console.log(`Assertion: ${r.passed ? "✓" : "✗"} ${r.assertion.type}`);
+      }
+      console.log(`Worktree: ${session.worktreePath}`);
+      process.exit(0);
+    } else {
+      console.log("");
+      console.log(`Fix not verified after ${session.attemptCount} attempt(s).`);
+      console.log("");
+      console.log(`Reproduction: ${id}`);
+      console.log(`Worktree: ${session.worktreePath} (left for inspection)`);
+      process.exit(1);
+    }
+  } catch (err) {
+    console.error(
+      `repro: fix error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    if (err instanceof FixError) {
+      console.error(`repro: worktree left at ${err.session.worktreePath} for inspection`);
+    }
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args[0];
@@ -1291,6 +1387,9 @@ async function main(): Promise<void> {
     case "bisect":
       await bisectCommand(args.slice(1));
       break;
+    case "fix":
+      await fixCommand(args.slice(1));
+      break;
     case "export":
       exportCommand(args.slice(1));
       break;
@@ -1325,6 +1424,8 @@ async function main(): Promise<void> {
       console.error("  minimize <id>      Minimize reproducing inputs");
       console.error("  fork <id> --at <n> Fork a recording at step N");
       console.error("  bisect run <id>    Binary-search for regression commit");
+      console.error("  fix <id> [--max-attempts N] [--agent name]");
+      console.error("                     Fix a reproduction with a coding agent");
       console.error("  export <id>        Export a portable bundle");
       console.error("  import <bundle>    Import a bundle");
       console.error("  verify <id>        Verify replayability of a recording");

@@ -13,7 +13,7 @@ export {
   matchesPathDenylist,
 } from "./redact.js";
 export { reassembleSSE, rechunkToSSE } from "./sse.js";
-export { generateTraceId } from "./id.js";
+export { generateTraceId, generateFixId } from "./id.js";
 export { evaluateAssertions } from "./assertions.js";
 export { scaffoldRepro, readManifest, writeManifest, addEntry } from "./manifest.js";
 export { createWorktree, removeWorktree } from "./worktree.js";
@@ -95,3 +95,27 @@ export {
   SNAPSHOT_FORMAT_VERSION,
 } from "./snapshot.js";
 export type { EnvironmentSnapshot, SnapshotOptions } from "./snapshot.js";
+export {
+  runFix,
+  checkReproduction,
+  formatFailureBrief,
+  readFixSession,
+  ClaudeCodeRunner,
+  AgentBinaryNotFoundError,
+  FixError,
+  BaselineNotFailingError,
+  ReproArtifactsModifiedError,
+  UnfixableAssertionsError,
+  AgentUnavailableError,
+  FIX_SESSION_FORMAT_VERSION,
+} from "./fix.js";
+export type {
+  AgentRunner,
+  AgentResult,
+  FailureBrief,
+  FixSession,
+  FixAttempt,
+  FixOptions,
+  FixResult,
+  ReproductionCheckResult,
+} from "./fix.js";

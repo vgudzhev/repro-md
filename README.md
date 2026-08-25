@@ -24,6 +24,7 @@ Record a real agent session, replay it offline, assert on what the agent did, an
 - [What Gets Recorded](#what-gets-recorded)
 - [Redaction](#redaction)
 - [Minimization](#minimization)
+- [Fixing a Reproduction](#fixing-a-reproduction)
 - [Architecture Decisions](#architecture-decisions)
 - [License](#license)
 
@@ -331,6 +332,7 @@ Returns a JSON object with `id`, `verdict`, `canReplay`, `environmentIdentical`,
 | `repro import <bundle>` | Import a bundle into the current repo |
 | `repro verify <id> [--json]` | Verify replayability of a recording |
 | `repro snapshot [--json]` | Capture and display an environment snapshot |
+| `repro fix <id> [--max-attempts N] [--agent name]` | Fix a reproduction with a coding agent, verified by `repro test` |
 
 ---
 
@@ -574,6 +576,58 @@ The output reports a "minimal reproducing set" — never "cause." A minimal suff
 
 ---
 
+## Fixing a Reproduction
+
+`repro fix` closes the loop: failure → reproduction → diagnosis → fix → verification → regression test. **repro owns the reproduction and verification loop; the coding agent only proposes changes.**
+
+```bash
+repro fix r-a1b2c3
+```
+
+What happens:
+
+1. `repro verify`s the reproduction — aborts if it isn't replayable.
+2. Creates an isolated git worktree at the recorded commit (your working tree is never touched).
+3. Replays the reproduction there to confirm it currently fails (the baseline). If it doesn't fail, `repro fix` aborts — there's nothing to fix.
+4. Hands a compact failure brief to a coding agent (Claude Code by default) working inside the worktree.
+5. Re-runs the reproduction. If `repro test <id>` would now pass, the fix is verified. Otherwise, it tries again — up to `--max-attempts` (default 3).
+
+```
+repro: fix r-a1b2c3
+repro: verifying reproduction and confirming baseline failure...
+repro: ✓ baseline confirmed failing
+repro: attempt 1/3 — ✗ assertion still failing (agent exit 0, 1 file(s) changed)
+repro: attempt 2/3 — ✓ assertion passed (agent exit 0, 1 file(s) changed)
+
+Fix verified.
+
+Reproduction: r-a1b2c3
+Attempts: 2
+Changed files: 1
+Diff: +3 / -1
+Assertion: ✓ command
+Worktree: /tmp/repro-worktree-xyz
+```
+
+Nothing is committed automatically. The worktree is always left behind — verified or not — so you can inspect the diff and decide whether to apply it:
+
+```bash
+cd /tmp/repro-worktree-xyz && git diff
+```
+
+**Options:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-attempts <n>` | `3` | How many times to retry the agent before giving up |
+| `--agent <name>` | `claude-code` | Which coding agent to use (only `claude-code` is currently supported) |
+
+**What makes an assertion fixable:** `command` assertions run a shell command against the worktree's actual state after replay — a code change can affect their outcome. `forbidden_path`, `no_repeat`, and `max_calls` are evaluated against the recorded trace itself, which replay serves byte-for-byte regardless of any code change. If a reproduction fails only on those, `repro fix` says so and doesn't burn attempts on a target it can't move — see [ADR-028](docs/decisions/028-fix-loop-and-agent-runner.md).
+
+**Storage:** each attempt is recorded under `.repro/<id>/fixes/<fix-id>/session.json` and `attempts.json` — reproduction ID, worktree path, agent, per-attempt result, changed files, and timestamps.
+
+---
+
 ## Architecture Decisions
 
 Design decisions are recorded in `docs/decisions/`. Key ones:
@@ -587,6 +641,7 @@ Design decisions are recorded in `docs/decisions/`. Key ones:
 | D-020 | Hash raw request body before redaction |
 | D-021 | Strip system prompt and `<system-reminder>` noise from hash |
 | D-027 | Environment snapshots as separate artifact |
+| D-028 | `repro fix` — bounded fix loop, pluggable AgentRunner, `repro test` is the only success signal |
 
 ---
 
