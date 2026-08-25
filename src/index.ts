@@ -40,3 +40,32 @@ export {
   getTracesDir,
 } from "./daemon.js";
 export type { DaemonConfig } from "./types.js";
+export {
+  verify,
+  runAllChecks,
+  computeVerdict,
+  formatVerifyResult,
+  formatVerifyJson,
+  verifyTraceIntegrity,
+  verifyMetaIntegrity,
+  verifyRequiredBlobs,
+  verifyGitCommit,
+  verifyRepositoryState,
+  verifyPlatform,
+  verifyArchitecture,
+  verifyRuntimeVersion,
+  verifyPackageManager,
+  verifyLockfileHash,
+  verifyRequiredFiles,
+  verifyAgentBinary,
+  verifyAgentVersion,
+  verifyModelCompatibility,
+  verifyReplayPrerequisites,
+  verifyWorktreePrerequisites,
+} from "./verify.js";
+export type {
+  CheckStatus,
+  VerifyCheck,
+  VerifyResult,
+  VerifyOptions,
+} from "./verify.js";

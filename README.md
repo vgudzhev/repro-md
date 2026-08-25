@@ -13,6 +13,7 @@ Record a real agent session, replay it offline, assert on what the agent did, an
 - [Step-by-Step Guide](#step-by-step-guide)
 - [Use Case: Catching an Agent That Edits Generated Files](#use-case-catching-an-agent-that-edits-generated-files)
 - [How It Works](#how-it-works)
+- [Verification](#verification)
 - [Commands Reference](#commands-reference)
 - [Assertions](#assertions)
 - [Replay Modes](#replay-modes)
@@ -237,6 +238,79 @@ Oracle-free assertions check what the agent did without needing a model to judge
 
 ---
 
+## Verification
+
+Before replaying a recording, check whether the current environment can actually reproduce it:
+
+```bash
+repro verify r-a1b2c3
+```
+
+Output for a compatible environment:
+
+```
+Reproduction: r-a1b2c3
+
+✓ trace integrity: 12 events valid
+✓ metadata integrity: meta.json valid
+✓ required blobs: 3 blob(s) present
+✓ git commit available: a1b2c3d4e5
+✓ repository state: clean working tree
+✓ runtime version: Node 22.4.0 compatible
+✓ lockfile hash: package-lock.json matches
+⚠ agent version: recorded 1.0.18, current 1.0.22
+✓ model responses recorded: 4 response(s) available for replay
+✓ replay prerequisites: 4 complete exchange(s)
+✓ worktree support: git worktree available
+
+Result: REPLAYABLE WITH WARNINGS
+```
+
+For a genuinely incompatible environment:
+
+```
+✗ runtime version: Node 18.0.0 required, Node 22.4.0 detected
+✗ required blobs: 2 blob(s) missing: a1b2c3d4e5f6…
+
+Result: NOT REPLAYABLE
+```
+
+### Three dimensions
+
+`repro verify` separates three questions:
+
+1. **Can replay?** — Are all hard prerequisites met (trace intact, blobs present, commit available, binary installed)?
+2. **Is this environment identical?** — Do platform, runtime version, lockfile, and other environment details match the recording?
+3. **Is this reproduction trustworthy?** — Are there any warnings or unknowns that could affect reliability?
+
+Environmental differences (different minor Node version, different OS) produce warnings, not failures. Only genuinely blocking issues (missing blobs, wrong major runtime version, missing binary) produce failures.
+
+### Machine-readable output
+
+```bash
+repro verify r-a1b2c3 --json
+```
+
+Returns a JSON object with `id`, `verdict`, `canReplay`, `environmentIdentical`, `trustworthy`, and a `checks` array where each check has `name`, `status` (PASS/WARN/FAIL/UNKNOWN), `message`, and `category`.
+
+### Check categories
+
+| Category | Checks |
+|---|---|
+| `trace` | Trace integrity, metadata integrity, required blobs |
+| `environment` | Git commit, repository state, platform, architecture, lockfile hash, required files |
+| `runtime` | Runtime version, package manager |
+| `replay` | Agent binary, agent version, model responses, replay prerequisites, worktree support |
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Replayable (with or without warnings) |
+| `1` | Not replayable (at least one FAIL check) |
+
+---
+
 ## Commands Reference
 
 | Command | Description |
@@ -251,6 +325,7 @@ Oracle-free assertions check what the agent did without needing a model to judge
 | `repro diff <a> <b> [--json]` | Align and compare two traces side by side |
 | `repro explain <a> <b>` | Report the first divergence and downstream effects |
 | `repro minimize <id> --budget <n>` | Delta-debug inputs to find a minimal reproducing set |
+| `repro verify <id> [--json]` | Verify replayability of a recording |
 
 ---
 

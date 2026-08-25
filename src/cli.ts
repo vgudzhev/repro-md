@@ -34,6 +34,7 @@ import {
   getTracesDir,
 } from "./daemon.js";
 import { listDaemonTraces } from "./retention.js";
+import { verify, formatVerifyResult, formatVerifyJson } from "./verify.js";
 
 function findTraceDir(
   id: string,
@@ -927,6 +928,32 @@ async function minimizeCommand(args: string[]): Promise<void> {
   }
 }
 
+function verifyCommand(args: string[]): void {
+  const id = args.find((a) => !a.startsWith("--"));
+  const jsonOutput = args.includes("--json");
+
+  if (!id) {
+    console.error("Usage: repro verify <id> [--json]");
+    process.exit(1);
+  }
+
+  const found = findTraceDir(id);
+  if (!found) {
+    console.error(`repro: trace ${id} not found`);
+    process.exit(1);
+  }
+
+  const result = verify(id, found.dir, process.cwd());
+
+  if (jsonOutput) {
+    console.log(formatVerifyJson(result));
+  } else {
+    console.log(formatVerifyResult(result));
+  }
+
+  process.exit(result.canReplay ? 0 : 1);
+}
+
 async function daemonCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
 
@@ -981,6 +1008,9 @@ async function main(): Promise<void> {
     case "minimize":
       await minimizeCommand(args.slice(1));
       break;
+    case "verify":
+      verifyCommand(args.slice(1));
+      break;
     case "daemon":
       await daemonCommand(args.slice(1));
       break;
@@ -1000,6 +1030,7 @@ async function main(): Promise<void> {
       console.error("  diff <a> <b>       Compare two traces");
       console.error("  explain <a> <b>    Explain first divergence");
       console.error("  minimize <id>      Minimize reproducing inputs");
+      console.error("  verify <id>        Verify replayability of a recording");
       console.error("  daemon start       Start background recording daemon");
       console.error("  daemon stop        Stop the daemon");
       console.error("  daemon status      Show daemon status");
