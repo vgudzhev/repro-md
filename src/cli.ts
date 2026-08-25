@@ -36,6 +36,12 @@ import {
 import { listDaemonTraces } from "./retention.js";
 import { planFork, executeFork } from "./fork.js";
 import { bisect, validateBisectInputs } from "./bisect.js";
+import {
+  exportBundle,
+  importBundle,
+  checkBundleSecurity,
+} from "./bundle.js";
+import { VERSION } from "./index.js";
 
 function findTraceDir(
   id: string,
@@ -1097,6 +1103,96 @@ async function daemonCommand(args: string[]): Promise<void> {
   }
 }
 
+function exportCommand(args: string[]): void {
+  const checkOnly = args.includes("--check");
+  const id = args.find((a) => !a.startsWith("--") && !a.startsWith("-"));
+
+  if (!id) {
+    console.error("Usage: repro export <id> [--check] [-o <path>]");
+    process.exit(1);
+  }
+
+  const found = findTraceDir(id);
+  if (!found) {
+    console.error(`repro: trace ${id} not found`);
+    process.exit(1);
+  }
+
+  if (checkOnly) {
+    const result = checkBundleSecurity(found.dir);
+    if (result.findings.length === 0) {
+      console.error("repro: ✓ no security findings");
+    } else {
+      for (const f of result.findings) {
+        const icon = f.severity === "high" ? "✗" : f.severity === "medium" ? "⚠" : "·";
+        console.error(`repro: ${icon} [${f.severity}] ${f.type} in ${f.location}`);
+        console.error(`repro:   ${f.detail}`);
+      }
+      console.error(
+        `\nrepro: ${result.findings.length} finding(s), ${result.safe ? "safe to export" : "review before exporting"}`,
+      );
+    }
+    process.exit(result.safe ? 0 : 1);
+  }
+
+  const oIdx = args.indexOf("-o");
+  const outputPath =
+    oIdx >= 0 && args[oIdx + 1]
+      ? args[oIdx + 1]
+      : join(process.cwd(), `repro-${id}.repro`);
+
+  const result = exportBundle(found.dir, outputPath, VERSION);
+
+  if (result.security.findings.length > 0) {
+    const highCount = result.security.findings.filter((f) => f.severity === "high").length;
+    const medCount = result.security.findings.filter((f) => f.severity === "medium").length;
+    if (highCount > 0) {
+      console.error(`repro: ⚠ ${highCount} high-severity security finding(s) — review with --check`);
+    }
+    if (medCount > 0) {
+      console.error(`repro: ⚠ ${medCount} medium-severity finding(s)`);
+    }
+  }
+
+  console.error(`repro: exported ${id} → ${outputPath}`);
+  console.error(`repro: checksum ${result.checksum.slice(0, 16)}…`);
+}
+
+function importCommand(args: string[]): void {
+  const bundlePath = args.find((a) => !a.startsWith("--"));
+
+  if (!bundlePath) {
+    console.error("Usage: repro import <bundle-path>");
+    process.exit(1);
+  }
+
+  if (!existsSync(bundlePath)) {
+    console.error(`repro: bundle not found: ${bundlePath}`);
+    process.exit(1);
+  }
+
+  const reproDir = join(process.cwd(), ".repro");
+  mkdirSync(reproDir, { recursive: true });
+
+  try {
+    const result = importBundle(bundlePath, reproDir);
+
+    if (result.idChanged) {
+      console.error(
+        `repro: ID collision — ${result.originalId} already exists, imported as ${result.id}`,
+      );
+    }
+
+    console.error(`repro: imported ${result.id}`);
+    console.error(`repro: trace at ${result.traceDir}`);
+    console.error(`repro: use 'repro run ${result.id}' to replay`);
+    console.error(`repro: use 'repro save ${result.id} --title ...' to add to REPRO.md`);
+  } catch (err) {
+    console.error(`repro: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args[0];
@@ -1138,6 +1234,12 @@ async function main(): Promise<void> {
     case "bisect":
       await bisectCommand(args.slice(1));
       break;
+    case "export":
+      exportCommand(args.slice(1));
+      break;
+    case "import":
+      importCommand(args.slice(1));
+      break;
     case "daemon":
       await daemonCommand(args.slice(1));
       break;
@@ -1159,6 +1261,8 @@ async function main(): Promise<void> {
       console.error("  minimize <id>      Minimize reproducing inputs");
       console.error("  fork <id> --at <n> Fork a recording at step N");
       console.error("  bisect run <id>    Binary-search for regression commit");
+      console.error("  export <id>        Export a portable bundle");
+      console.error("  import <bundle>    Import a bundle");
       console.error("  daemon start       Start background recording daemon");
       console.error("  daemon stop        Stop the daemon");
       console.error("  daemon status      Show daemon status");
