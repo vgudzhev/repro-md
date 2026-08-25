@@ -14,6 +14,7 @@ Record a real agent session, replay it offline, assert on what the agent did, an
 - [Use Case: Catching an Agent That Edits Generated Files](#use-case-catching-an-agent-that-edits-generated-files)
 - [How It Works](#how-it-works)
 - [Commands Reference](#commands-reference)
+- [Portable Bundles](#portable-bundles)
 - [Assertions](#assertions)
 - [Replay Modes](#replay-modes)
 - [Recording Options](#recording-options)
@@ -251,6 +252,56 @@ Oracle-free assertions check what the agent did without needing a model to judge
 | `repro diff <a> <b> [--json]` | Align and compare two traces side by side |
 | `repro explain <a> <b>` | Report the first divergence and downstream effects |
 | `repro minimize <id> --budget <n>` | Delta-debug inputs to find a minimal reproducing set |
+| `repro export <id> [--check] [-o path]` | Export a portable bundle |
+| `repro import <bundle>` | Import a bundle into the current repo |
+
+---
+
+## Portable Bundles
+
+Share reproductions across machines, repositories, and CI systems.
+
+### Export
+
+```bash
+repro export r-abc123
+```
+
+Creates `repro-r-abc123.repro` — a portable, integrity-checked bundle containing the trace, assertions, blobs, and metadata. Machine-specific paths are sanitized.
+
+**Security check** (dry run, no file created):
+
+```bash
+repro export r-abc123 --check
+```
+
+Scans for unredacted secrets, absolute paths, and other sensitive content. Exits non-zero if high-severity findings are detected.
+
+**Custom output path:**
+
+```bash
+repro export r-abc123 -o /tmp/bug-report.repro
+```
+
+### Import
+
+```bash
+repro import repro-r-abc123.repro
+```
+
+Validates the bundle (version, checksums, blob integrity, security), then writes it to `.repro/<id>/`. If an ID collision occurs, a new ID is generated automatically.
+
+After importing, use the standard commands:
+
+```bash
+repro run <id>           # replay the imported trace
+repro save <id> --title  # add to REPRO.md
+repro test               # include in CI test suite
+```
+
+### Bundle Format
+
+Bundles are gzip-compressed JSON with SHA-256 integrity checking. The format is versioned and designed for interoperability — see [`docs/bundle-format.md`](docs/bundle-format.md) for the full specification.
 
 ---
 

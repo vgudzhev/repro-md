@@ -40,3 +40,21 @@ export {
   getTracesDir,
 } from "./daemon.js";
 export type { DaemonConfig } from "./types.js";
+export {
+  exportBundle,
+  importBundle,
+  readBundle,
+  validateBundle,
+  checkBundleSecurity,
+  stableStringify,
+  BUNDLE_FORMAT_VERSION,
+  BUNDLE_GENERATOR,
+} from "./bundle.js";
+export type {
+  Bundle,
+  SecurityFinding,
+  SecurityCheckResult,
+  ExportResult,
+  ImportResult,
+  BundleValidationError,
+} from "./bundle.js";
