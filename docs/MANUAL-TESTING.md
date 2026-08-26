@@ -1,4 +1,4 @@
-# repro v0.2.0 — Manual Testing Scenarios
+# repro v0.3.0 — Manual Testing Scenarios
 
 Complete hands-on testing guide for every repro feature. Each scenario is self-contained: set up a trap project, run an agent, capture the result, and verify with repro's tooling.
 
@@ -9,7 +9,7 @@ These scenarios double as article material — each one demonstrates a real prob
 ## Prerequisites
 
 ```bash
-npm install -g repro-md@0.2.0
+npm install -g repro-md@0.3.0
 ```
 
 Verify:
@@ -922,9 +922,109 @@ repro: first bad commit: <sha> refactor: simplify divide
 
 ---
 
+### Scenario 12: Fix — automated failure-to-fix loop
+
+**What you're testing:** `repro fix` hands a failing reproduction to an agent, verifies the result with `repro test`, and stops when assertions pass.
+
+**Setup:** You need a recording with a failing `command` assertion. Use scenario 2's setup (the `divide` bug):
+
+```bash
+cd /tmp/repro-test-project
+git checkout -- src tests .env AGENTS.md && git clean -fd src tests
+
+# Record the agent trying to fix the test
+repro record -- claude --print "run node --test tests/ and tell me the results"
+
+# Save with a command assertion that checks the tests pass
+repro save <id> \
+  --title "tests must pass" \
+  --assertion "command:node --test tests/"
+```
+
+**Step 1 — Verify the baseline fails:**
+
+```bash
+repro test
+```
+
+Expected: FAIL — the `command` assertion fails because `divide(1, 0)` doesn't throw.
+
+**Step 2 — Run `repro fix`:**
+
+```bash
+repro fix <id>
+```
+
+Expected output:
+
+```
+repro: verifying <id> reproduces...
+repro: ✗ baseline fails (1 assertion, 0 divergences)
+repro: fixable assertions: 1 (command)
+repro: frozen assertions: 0
+
+attempt 1/3
+repro: creating worktree...
+repro: running agent (claude)...
+repro: agent exited (0) in Xs
+repro: checking reproduction...
+repro: ✓ all assertions pass, 0 divergences
+
+repro: ✓ fixed in 1 attempt
+repro: diff: N files changed, ...
+repro: worktree: /tmp/repro-wt-...
+```
+
+The agent should add `if (b === 0) throw new Error("division by zero")` to `divide()`.
+
+**Step 3 — Inspect the worktree:**
+
+```bash
+cd <worktree-path-from-output>
+cat src/lib/math.js
+node --test tests/
+```
+
+Expected: the fix is in `divide()`, all tests pass.
+
+**Step 4 — Test with `--max-attempts 1`:**
+
+```bash
+cd /tmp/repro-test-project
+git checkout -- src tests .env AGENTS.md && git clean -fd src tests
+repro fix <id> --max-attempts 1
+```
+
+Expected: if the agent fixes it on attempt 1, same as above. If not, reports max attempts exhausted.
+
+**Step 5 — Test with frozen-only assertions (should abort early):**
+
+```bash
+# Create a recording with only frozen assertions
+repro record -- claude --print "list the files"
+repro save <new-id> \
+  --title "frozen only" \
+  --assertion "forbidden_path:src/gen/**"
+
+# Only try to fix if the assertion actually fails
+repro test
+# If it fails:
+repro fix <new-id>
+```
+
+Expected: if the only failing assertions are frozen types (`forbidden_path`, `no_repeat`, `max_calls`), `repro fix` aborts immediately with a message explaining these can't be fixed by code changes.
+
+**What to record for the article:**
+- The full `repro fix` output showing the attempt loop
+- The diff produced by the agent
+- The worktree with the fix applied
+- The early abort message for frozen assertions
+
+---
+
 ## Part 4 — End-to-End Combo Scenarios
 
-### Scenario 12: Record → Snapshot → Export → Import → Verify
+### Scenario 13: Record → Snapshot → Export → Import → Verify
 
 **What you're testing:** The full workflow from recording to sharing to verification.
 
@@ -968,7 +1068,7 @@ rm -rf /tmp/repro-pipeline-test
 
 ---
 
-### Scenario 13: Daemon → Save → Test → Export
+### Scenario 14: Daemon → Save → Test → Export
 
 **What you're testing:** A daemon-captured trace can be saved, tested, and exported just like a manual recording.
 
@@ -1021,8 +1121,9 @@ Scenario                          Pass/Fail  Assertion fired?  Notes
  9. Environment snapshots         _____      _____             _____
 10. Fork                          _____      _____             _____
 11. Bisect                        _____      _____             _____
-12. Full pipeline                 _____      _____             _____
-13. Daemon → export               _____      _____             _____
+12. Fix                           _____      _____             _____
+13. Full pipeline                 _____      _____             _____
+14. Daemon → export               _____      _____             _____
 
 Redaction check (all must be exit code 1):
   grep "s3cr3tP@ssw0rd"          exit: ____
